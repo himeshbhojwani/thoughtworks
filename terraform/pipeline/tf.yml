@@ -1,0 +1,75 @@
+trigger: none
+
+stages:
+      
+  - stage: Dev
+    pool: 
+      vmImage: 'windows-latest'
+    jobs:
+    - deployment: 'Dev_Deployment'
+      displayName: 'Dev_TF_Plan'
+      environment: Dev
+      variables:
+        - group: 'dev-mshosted'
+      strategy:
+        runOnce:
+          deploy:
+            steps:
+              - task: charleszipp.azure-pipelines-tasks-terraform.azure-pipelines-tasks-terraform-installer.TerraformInstaller@0
+                displayName: 'Use Terraform latest'
+              - script: |
+                  cd "$(Build.SourcesDirectory)/${{ parameters.workdir }}"
+                  terraform init --reconfigure
+                displayName: "TF init"
+              - script: |
+                  cd "$(Build.SourcesDirectory)/${{ parameters.workdir }}"
+                  terraform plan -var-file="./environments/${{ parameters.tfvar_ext }}/terraform.tfvars"
+                displayName: "TF Plan"
+
+    - job: DevValidation
+      dependsOn: Dev_Deployment
+      displayName: Approve Dev Plan
+      pool: server
+      timeoutInMinutes: 120 # job times out in 2 hours
+      steps:
+      - task: ManualValidation@0
+        timeoutInMinutes: 60 # task times out in 1 hour
+        inputs:
+          notifyUsers: |
+            himesh.bhojwani@thoughtworks.com
+          instructions: 'Please validate the build configuration and resume'
+          onTimeout: 'reject'
+    - jobs:
+    - deployment: 'Dev_Deployment'
+      displayName: 'Dev_TF_Apply'
+      environment: Dev
+      variables:
+        - group: 'dev-mshosted'
+      strategy:
+        runOnce:
+          deploy:
+            steps:
+              - task: charleszipp.azure-pipelines-tasks-terraform.azure-pipelines-tasks-terraform-installer.TerraformInstaller@0
+                displayName: 'Use Terraform latest'
+              - script: |
+                  cd "$(Build.SourcesDirectory)/${{ parameters.workdir }}"
+                  terraform init --reconfigure
+                displayName: "TF init"
+              - script: |
+                  cd "$(Build.SourcesDirectory)/${{ parameters.workdir }}"
+                  terraform apply -var-file="./environments/${{ parameters.tfvar_ext }}/terraform.tfvars --auto-approve"
+                displayName: "TF Plan"
+      - task: AzureCLI@2
+        displayName: 'Create Blob snapshot'
+        inputs:
+          azureSubscription: 'Primark-DEV'
+          ScriptType: bash
+          scriptLocation: inlineScript
+          inlineScript: |
+            StorageAccountName='$(storage-account-name)'
+            StorageAccountKey='$(access-key)'
+            ContainerName="landingzone-state"
+            BlobName="landingzone.tfstate"
+            
+            az storage blob snapshot --container-name $ContainerName --name $BlobName --account-name $StorageAccountName --account-key $StorageAccountKey
+        condition: always()
